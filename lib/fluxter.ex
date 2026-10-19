@@ -299,11 +299,7 @@ defmodule Fluxter do
         import Supervisor.Spec
 
         config = Fluxter.get_config(__MODULE__, options)
-
-        conn =
-          config.host
-          |> Fluxter.Conn.new(config.port)
-          |> Map.update!(:header, &[&1 | config.prefix])
+        conn = Fluxter.Conn.new(config.host, config.port, config.prefix)
 
         @worker_names
         |> Enum.map(fn name ->

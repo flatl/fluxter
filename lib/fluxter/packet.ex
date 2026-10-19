@@ -4,7 +4,7 @@ defmodule Fluxter.Packet do
   import Bitwise
 
   otp_release = :erlang.system_info(:otp_release)
-  @addr_family if(otp_release >= '19', do: [1], else: [])
+  @addr_family if(otp_release >= ~c"19", do: [1], else: [])
 
   def header({n1, n2, n3, n4}, port) do
     true = Code.ensure_loaded?(:gen_udp)
@@ -27,10 +27,10 @@ defmodule Fluxter.Packet do
       ] ++ anc_data_part
   end
 
-  def build(header, name, tags, fields) do
+  def build(prefix, name, tags, fields) do
     tags = encode_tags(tags)
     fields = encode_fields(fields)
-    [header, encode_key(name), tags, ?\s, fields]
+    [prefix, encode_key(name), tags, ?\s, fields]
   end
 
   defp encode_tags([]), do: ""
@@ -48,7 +48,7 @@ defmodule Fluxter.Packet do
   end
 
   defp encode_key(val) do
-    to_string(val) |> escape(' ,')
+    to_string(val) |> escape(~c" ,")
   end
 
   defp encode_value(val) do
@@ -63,7 +63,7 @@ defmodule Fluxter.Packet do
         Atom.to_string(val)
 
       is_binary(val) ->
-        [?\", escape(val, '"'), ?\"]
+        [?\", escape(val, ~c"\""), ?\"]
     end
   end
 
