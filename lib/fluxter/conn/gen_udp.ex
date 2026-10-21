@@ -24,9 +24,9 @@ defmodule Fluxter.Conn.GenUdp do
   end
 
   @impl Fluxter.Conn
-  def write(worker, name, tags, fields)
+  def write(worker, name, tags, fields, timestamp)
       when (is_binary(name) or is_list(name)) and is_list(tags) and is_list(fields) do
-    GenServer.cast(worker, {:write, name, tags, fields})
+    GenServer.cast(worker, {:write, name, tags, fields, timestamp})
   end
 
   @impl GenServer
@@ -36,8 +36,8 @@ defmodule Fluxter.Conn.GenUdp do
   end
 
   @impl GenServer
-  def handle_cast({:write, name, tags, fields}, conn) do
-    packet = Packet.build(conn.prefix, name, tags, fields)
+  def handle_cast({:write, name, tags, fields, timestamp}, conn) do
+    packet = Packet.build(conn.prefix, name, tags, fields, timestamp)
 
     case :gen_udp.send(conn.sock, conn.addr, conn.port, packet) do
       :ok ->

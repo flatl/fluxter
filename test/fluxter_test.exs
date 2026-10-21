@@ -48,16 +48,16 @@ defmodule FluxterTest do
     def start_link(state, name), do: GenServer.start_link(__MODULE__, state, name: name)
 
     @impl Fluxter.Conn
-    def write(worker, name, tags, fields) do
-      GenServer.cast(worker, {:write, name, tags, fields})
+    def write(worker, name, tags, fields, timestamp) do
+      GenServer.cast(worker, {:write, name, tags, fields, timestamp})
     end
 
     @impl true
     def init(state), do: {:ok, state}
 
     @impl true
-    def handle_cast({:write, name, tags, fields}, state) do
-      send(:fluxter_capture, {:capture, name, tags, fields})
+    def handle_cast({:write, name, tags, fields, timestamp}, state) do
+      send(:fluxter_capture, {:capture, name, tags, fields, timestamp})
       {:noreply, state}
     end
   end
@@ -147,10 +147,25 @@ defmodule FluxterTest do
              SwapPool.start_link(connection: CaptureConn, pool_size: 1, prefix: "cap_")
 
     SwapPool.write("capm", [], x: 1)
-    assert_receive {:capture, "capm", [], [x: 1]}, 1000
+    assert_receive {:capture, "capm", [], [x: 1], nil}, 1000
   after
     :code.delete(SwapPool)
     :code.purge(SwapPool)
+  end
+
+  test "write appends a provided nanosecond timestamp" do
+    TestFluxter.write("foo", [], [x: 1], 1_415_521_167_028_000_000)
+    assert_receive {:echo, "foo x=1i 1415521167028000000"}
+  end
+
+  test "write omits the timestamp when not provided" do
+    TestFluxter.write("foo", [], [x: 1])
+    assert_receive {:echo, "foo x=1i"}
+  end
+
+  test "write omits the timestamp when nil is passed" do
+    TestFluxter.write("foo", [], [x: 1], nil)
+    assert_receive {:echo, "foo x=1i"}
   end
 
   test "write/2,3" do

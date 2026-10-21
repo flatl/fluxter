@@ -27,10 +27,17 @@ defmodule Fluxter.Packet do
       ] ++ anc_data_part
   end
 
-  def build(prefix, name, tags, fields) do
+  def build(prefix, name, tags, fields, timestamp) do
     tags = encode_tags(tags)
     fields = encode_fields(fields)
-    [prefix, encode_key(name), tags, ?\s, fields]
+    line = [prefix, encode_key(name), tags, ?\s, fields]
+    append_timestamp(line, timestamp)
+  end
+
+  defp append_timestamp(line, nil), do: line
+
+  defp append_timestamp(line, timestamp) when is_integer(timestamp) do
+    line ++ [?\s, Integer.to_string(timestamp)]
   end
 
   defp encode_tags([]), do: ""

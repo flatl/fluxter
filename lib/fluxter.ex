@@ -91,6 +91,8 @@ defmodule Fluxter do
   @type tags :: [{String.Chars.t(), String.Chars.t()}]
   @type field_value :: number | boolean | binary
   @type fields :: [{String.Chars.t(), field_value}]
+  # Timestamp in nanoseconds since Unix epoch; `nil` lets InfluxDB stamp the point.
+  @type timestamp :: nil | non_neg_integer()
   @opaque counter :: pid
 
   @doc """
@@ -149,6 +151,12 @@ defmodule Fluxter do
   Assuming a `MyApp.Fluxter` Fluxter pool exists:
 
       iex> MyApp.Fluxter.write("cpu_temp", [host: "eu-west"], 68)
+      :ok
+
+  An explicit timestamp may be passed as the fourth argument (nanoseconds since
+  Unix epoch); pass `nil` to let InfluxDB assign one:
+
+      iex> MyApp.Fluxter.write("cpu_temp", [host: "eu-west"], 68, System.system_time(:nanosecond))
       :ok
 
   """
@@ -315,17 +323,25 @@ defmodule Fluxter do
         end
       end
 
-      def write(measurement, tags \\ [], fields)
+      def write(measurement, tags, fields, timestamp \\ nil)
 
-      def write(measurement, tags, fields) when is_list(fields) do
+      def write(measurement, tags, fields, timestamp) when is_list(fields) do
         {conn_mod, names} = Fluxter.Pool.state(__MODULE__)
-        conn_mod.write(Enum.random(names), measurement, tags, fields)
+        conn_mod.write(Enum.random(names), measurement, tags, fields, timestamp)
       end
 
-      def write(measurement, tags, value)
-          when is_float(value) or is_integer(value)
-          when is_boolean(value) or is_binary(value) do
-        write(measurement, tags, value: value)
+      def write(measurement, tags, value, timestamp)
+          when is_float(value) or is_integer(value) or is_boolean(value) or is_binary(value) do
+        write(measurement, tags, [value: value], timestamp)
+      end
+
+      def write(measurement, fields) when is_list(fields) do
+        write(measurement, [], fields)
+      end
+
+      def write(measurement, value)
+          when is_float(value) or is_integer(value) or is_boolean(value) or is_binary(value) do
+        write(measurement, [], value)
       end
 
       def measure(measurement, tags \\ [], fields \\ [], fun_or_mfa) do

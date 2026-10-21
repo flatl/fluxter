@@ -22,6 +22,7 @@ defmodule Fluxter.Conn do
     worker :: __MODULE__,
     name :: binary() | charlist(),
     tags :: [{String.Chars.t(), String.Chars.t()}],
-    fields :: [{String.Chars.t(), String.Chars.t()}]
+    fields :: [{String.Chars.t(), String.Chars.t()}],
+    timestamp :: integer() | nil
   ) :: :ok
 end
