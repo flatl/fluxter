@@ -56,9 +56,9 @@ defmodule Fluxter do
       the configured Fluxter pool will be prefixed by the value of this
       option. If `nil`, metrics will not be prefixed. Defaults to `nil`.
     * `:pool_size` - (integer) the size of the connection pool for the given
-      Fluxter pool. **This option can only be configured on a per-pool basis**;
-      configuring it globally for the `:fluxter` application has no
-      effect. Defaults to `5`.
+      Fluxter pool.
+    * `:connection` - (module) connection module implemented `Fluxter.Conn` and `GenServer` behaviour.
+      Default is `Fluxter.Conn.GenUdp`
 
   ## Metric aggregation
 
@@ -91,6 +91,8 @@ defmodule Fluxter do
   @type tags :: [{String.Chars.t(), String.Chars.t()}]
   @type field_value :: number | boolean | binary
   @type fields :: [{String.Chars.t(), field_value}]
+  # Timestamp in nanoseconds since Unix epoch; `nil` lets InfluxDB stamp the point.
+  @type timestamp :: nil | non_neg_integer()
   @opaque counter :: pid
 
   @doc """
@@ -149,6 +151,12 @@ defmodule Fluxter do
   Assuming a `MyApp.Fluxter` Fluxter pool exists:
 
       iex> MyApp.Fluxter.write("cpu_temp", [host: "eu-west"], 68)
+      :ok
+
+  An explicit timestamp may be passed as the fourth argument (nanoseconds since
+  Unix epoch); pass `nil` to let InfluxDB assign one:
+
+      iex> MyApp.Fluxter.write("cpu_temp", [host: "eu-west"], 68, System.system_time(:nanosecond))
       :ok
 
   """
@@ -284,9 +292,6 @@ defmodule Fluxter do
     quote unquote: false, location: :keep do
       @behaviour Fluxter
 
-      @pool_size Application.compile_env(:fluxter, [__MODULE__, :pool_size], 5)
-      @worker_names Enum.map(0..(@pool_size - 1), &:"#{__MODULE__}-#{&1}")
-
       def child_spec(options) do
         %{
           id: __MODULE__,
@@ -299,40 +304,44 @@ defmodule Fluxter do
         import Supervisor.Spec
 
         config = Fluxter.get_config(__MODULE__, options)
+        conn_mod = config.connection
+        conn_params = conn_mod.new(config.host, config.port, config.prefix)
+        worker_names = Enum.map(0..(config.pool_size - 1), &:"#{__MODULE__}-#{&1}")
 
-        conn =
-          config.host
-          |> Fluxter.Conn.new(config.port)
-          |> Map.update!(:header, &[&1 | config.prefix])
+        children =
+          Enum.map(worker_names, fn name ->
+            %{id: name, start: {conn_mod, :start_link, [conn_params, name]}}
+          end)
 
-        @worker_names
-        |> Enum.map(fn name ->
-          %{id: name, start: {Fluxter.Conn, :start_link, [conn, name]}}
-        end)
-        |> Supervisor.start_link(strategy: :one_for_one)
-      end
+        case Supervisor.start_link(children, strategy: :one_for_one) do
+          {:ok, _pid} = result ->
+            Fluxter.Pool.store(__MODULE__, conn_mod, worker_names)
+            result
 
-      @compile {:inline, worker_name: 1}
-      for {name, index} <- Enum.with_index(@worker_names) do
-        defp worker_name(unquote(index)) do
-          unquote(name)
+          error ->
+            error
         end
       end
 
-      def write(measurement, tags \\ [], fields)
+      def write(measurement, tags, fields, timestamp \\ nil)
 
-      def write(measurement, tags, fields) when is_list(fields) do
-        [:positive]
-        |> System.unique_integer()
-        |> rem(@pool_size)
-        |> worker_name()
-        |> Fluxter.Conn.write(measurement, tags, fields)
+      def write(measurement, tags, fields, timestamp) when is_list(fields) do
+        {conn_mod, names} = Fluxter.Pool.state(__MODULE__)
+        conn_mod.write(Enum.random(names), measurement, tags, fields, timestamp)
       end
 
-      def write(measurement, tags, value)
-          when is_float(value) or is_integer(value)
-          when is_boolean(value) or is_binary(value) do
-        write(measurement, tags, value: value)
+      def write(measurement, tags, value, timestamp)
+          when is_float(value) or is_integer(value) or is_boolean(value) or is_binary(value) do
+        write(measurement, tags, [value: value], timestamp)
+      end
+
+      def write(measurement, fields) when is_list(fields) do
+        write(measurement, [], fields)
+      end
+
+      def write(measurement, value)
+          when is_float(value) or is_integer(value) or is_boolean(value) or is_binary(value) do
+        write(measurement, [], value)
       end
 
       def measure(measurement, tags \\ [], fields \\ [], fun_or_mfa) do
@@ -376,7 +385,9 @@ defmodule Fluxter do
     %{
       prefix: build_prefix(env, overrides),
       host: Keyword.get(options, :host, "127.0.0.1"),
-      port: Keyword.get(options, :port, 8125)
+      port: Keyword.get(options, :port, 8125),
+      pool_size: Keyword.get(options, :pool_size, 5),
+      connection: Keyword.get(options, :connection, Fluxter.Conn.GenUdp)
     }
   end
 

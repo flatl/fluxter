@@ -38,6 +38,30 @@ defmodule FluxterTest do
     use Fluxter
   end
 
+  defmodule CaptureConn do
+    use Fluxter.Conn
+
+    @impl Fluxter.Conn
+    def new(_host, _port, _prefix), do: %{}
+
+    @impl Fluxter.Conn
+    def start_link(state, name), do: GenServer.start_link(__MODULE__, state, name: name)
+
+    @impl Fluxter.Conn
+    def write(worker, name, tags, fields, timestamp) do
+      GenServer.cast(worker, {:write, name, tags, fields, timestamp})
+    end
+
+    @impl true
+    def init(state), do: {:ok, state}
+
+    @impl true
+    def handle_cast({:write, name, tags, fields, timestamp}, state) do
+      send(:fluxter_capture, {:capture, name, tags, fields, timestamp})
+      {:noreply, state}
+    end
+  end
+
   setup_all do
     {:ok, server} = EchoServer.start_link(8092)
     {:ok, _} = TestFluxter.start_link()
@@ -69,7 +93,9 @@ defmodule FluxterTest do
       assert Fluxter.get_config(TestFluxter, []) == %{
                host: "tortoise.tld",
                port: 2233,
-               prefix: "foo_bar_"
+               prefix: "foo_bar_",
+               pool_size: 5,
+               connection: Fluxter.Conn.GenUdp
              }
     after
       for {key, _} <- config, do: Application.delete_env(:fluxter, key)
@@ -87,11 +113,59 @@ defmodule FluxterTest do
     options = [port: 9092, prefix: "xyzzy"]
     {:ok, _} = OtherFluxter.start_link(options)
 
-    OtherFluxter.write('foo', bar: 2)
+    OtherFluxter.write(~c"foo", bar: 2)
     assert_receive {:echo, "xyzzy_foo bar=2i"}
   after
     :code.delete(OtherFluxter)
     :code.purge(OtherFluxter)
+  end
+
+  test "pool size is a runtime option" do
+    defmodule SizedPool do
+      use Fluxter
+    end
+
+    assert {:ok, _sup} = SizedPool.start_link(pool_size: 3, port: 9093, prefix: "sz")
+
+    names = Fluxter.Pool.workers(SizedPool)
+    assert length(names) == 3
+    Enum.each(names, fn name -> assert is_pid(Process.whereis(name)) end)
+    assert is_nil(Process.whereis(String.to_atom("#{SizedPool}-3")))
+  after
+    :code.delete(SizedPool)
+    :code.purge(SizedPool)
+  end
+
+  test "connection module is swappable from config" do
+    defmodule SwapPool do
+      use Fluxter
+    end
+
+    Process.register(self(), :fluxter_capture)
+
+    assert {:ok, _sup} =
+             SwapPool.start_link(connection: CaptureConn, pool_size: 1, prefix: "cap_")
+
+    SwapPool.write("capm", [], x: 1)
+    assert_receive {:capture, "capm", [], [x: 1], nil}, 1000
+  after
+    :code.delete(SwapPool)
+    :code.purge(SwapPool)
+  end
+
+  test "write appends a provided nanosecond timestamp" do
+    TestFluxter.write("foo", [], [x: 1], 1_415_521_167_028_000_000)
+    assert_receive {:echo, "foo x=1i 1415521167028000000"}
+  end
+
+  test "write omits the timestamp when not provided" do
+    TestFluxter.write("foo", [], [x: 1])
+    assert_receive {:echo, "foo x=1i"}
+  end
+
+  test "write omits the timestamp when nil is passed" do
+    TestFluxter.write("foo", [], [x: 1], nil)
+    assert_receive {:echo, "foo x=1i"}
   end
 
   test "write/2,3" do
@@ -108,7 +182,7 @@ defmodule FluxterTest do
     TestFluxter.write("foo", "data\"")
     assert_receive {:echo, "foo value=\"data\\\"\""}
 
-    TestFluxter.write('foo', true)
+    TestFluxter.write(~c"foo", true)
     assert_receive {:echo, "foo value=true"}
     TestFluxter.write("foo", false)
     assert_receive {:echo, "foo value=false"}
