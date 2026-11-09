@@ -44,7 +44,7 @@ defmodule Fluxter.Conn.GenUdp do
         {:noreply, conn}
 
       {:error, reason} ->
-        Logger.warning("fluxter: failed to send metric: #{:inet.format_error(reason)}; reopening socket")
+        Logger.error("fluxter: failed to send metric: #{:inet.format_error(reason)}; reopening socket")
         :gen_udp.close(conn.sock)
         {:ok, sock} = :gen_udp.open(0, active: false)
         {:noreply, %{conn | sock: sock}}

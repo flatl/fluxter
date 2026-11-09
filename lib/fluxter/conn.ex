@@ -19,7 +19,7 @@ defmodule Fluxter.Conn do
   @callback start_link(struct(), name :: atom()) :: {:ok, pid()}
 
   @callback write(
-    worker :: __MODULE__,
+    worker :: atom() | pid(),
     name :: binary() | charlist(),
     tags :: [{String.Chars.t(), String.Chars.t()}],
     fields :: [{String.Chars.t(), String.Chars.t()}],

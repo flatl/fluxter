@@ -86,16 +86,13 @@ defmodule FluxterTest do
       prefix: "foo"
     ]
 
-    # TODO: Use put_all_env/3 with Elixir v1.9 and higher.
     for {key, value} <- config, do: Application.put_env(:fluxter, key, value)
 
     try do
       assert Fluxter.get_config(TestFluxter, []) == %{
                host: "tortoise.tld",
                port: 2233,
-               prefix: "foo_bar_",
-               pool_size: 5,
-               connection: Fluxter.Conn.GenUdp
+               prefix: "foo_bar_"
              }
     after
       for {key, _} <- config, do: Application.delete_env(:fluxter, key)
@@ -118,39 +115,6 @@ defmodule FluxterTest do
   after
     :code.delete(OtherFluxter)
     :code.purge(OtherFluxter)
-  end
-
-  test "pool size is a runtime option" do
-    defmodule SizedPool do
-      use Fluxter
-    end
-
-    assert {:ok, _sup} = SizedPool.start_link(pool_size: 3, port: 9093, prefix: "sz")
-
-    names = Fluxter.Pool.workers(SizedPool)
-    assert length(names) == 3
-    Enum.each(names, fn name -> assert is_pid(Process.whereis(name)) end)
-    assert is_nil(Process.whereis(String.to_atom("#{SizedPool}-3")))
-  after
-    :code.delete(SizedPool)
-    :code.purge(SizedPool)
-  end
-
-  test "connection module is swappable from config" do
-    defmodule SwapPool do
-      use Fluxter
-    end
-
-    Process.register(self(), :fluxter_capture)
-
-    assert {:ok, _sup} =
-             SwapPool.start_link(connection: CaptureConn, pool_size: 1, prefix: "cap_")
-
-    SwapPool.write("capm", [], x: 1)
-    assert_receive {:capture, "capm", [], [x: 1], nil}, 1000
-  after
-    :code.delete(SwapPool)
-    :code.purge(SwapPool)
   end
 
   test "write appends a provided nanosecond timestamp" do

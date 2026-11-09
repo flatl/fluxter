@@ -160,6 +160,11 @@ defmodule Fluxter do
       :ok
 
   """
+  @callback write(measurement, tags, field_value | fields, timestamp) :: :ok
+
+  @doc """
+  Should be the same as `write(measurement, [], fields, nil)`.
+  """
   @callback write(measurement, tags, field_value | fields) :: :ok
 
   @doc """
@@ -176,6 +181,11 @@ defmodule Fluxter do
   Should be the same as `measure(measurement, tags, [], fun_or_mfa)`.
   """
   @callback measure(measurement, tags, (() -> result) | mfa()) :: result when result: var
+
+  @doc """
+  Should be the same as `measure(measurement, tags, fields, nil, fun_or_mfa)`.
+  """
+  @callback measure(measurement, tags, fields, (() -> result) | mfa()) :: result when result: var
 
   @doc """
   Measures the execution time of `fun_or_mfa` and writes it as a metric.
@@ -197,13 +207,13 @@ defmodule Fluxter do
 
   Assuming a `MyApp.Fluxter` Fluxter pool exists:
 
-      iex> MyApp.Fluxter.measure "task_exec_time", [host: "us-east"], fn ->
+      iex> MyApp.Fluxter.measure "task_exec_time", [host: "us-east"], System.system_time(:nanosecond), fn ->
       ...>   1 + 1
       ...> end
       2
 
   """
-  @callback measure(measurement, tags, fields, (() -> result) | mfa()) :: result when result: var
+  @callback measure(measurement, tags, fields, timestamp, (() -> result) | mfa()) :: result when result: var
 
   @doc """
   Should be the same as `start_counter(measurement, [], [])`.
@@ -292,6 +302,14 @@ defmodule Fluxter do
     quote unquote: false, location: :keep do
       @behaviour Fluxter
 
+      @connection Application.compile_env(:fluxter, [__MODULE__, :connection], Fluxter.Conn.GenUdp)
+      @pool_size (case Application.compile_env(:fluxter, [__MODULE__, :pool_size], 5) do
+        val when is_integer(val) and val > 0 -> val
+
+        other -> raise "Expected :pool_size to be natural number, but got #{inspect(other)}"
+      end)
+      @worker_names Enum.map(0..(@pool_size - 1), &:"#{__MODULE__}-#{&1}")
+
       def child_spec(options) do
         %{
           id: __MODULE__,
@@ -304,30 +322,31 @@ defmodule Fluxter do
         import Supervisor.Spec
 
         config = Fluxter.get_config(__MODULE__, options)
-        conn_mod = config.connection
-        conn_params = conn_mod.new(config.host, config.port, config.prefix)
-        worker_names = Enum.map(0..(config.pool_size - 1), &:"#{__MODULE__}-#{&1}")
+        conn_params = @connection.new(config.host, config.port, config.prefix)
+        worker_names = Enum.map(0..(@pool_size - 1), &:"#{__MODULE__}-#{&1}")
 
-        children =
-          Enum.map(worker_names, fn name ->
-            %{id: name, start: {conn_mod, :start_link, [conn_params, name]}}
-          end)
+        @worker_names
+        |> Enum.map(fn name ->
+          %{id: name, start: {@connection, :start_link, [conn_params, name]}}
+        end)
+        |> Supervisor.start_link(strategy: :one_for_one, max_restarts: 10, max_seconds: 1)
+      end
 
-        case Supervisor.start_link(children, strategy: :one_for_one) do
-          {:ok, _pid} = result ->
-            Fluxter.Pool.store(__MODULE__, conn_mod, worker_names)
-            result
-
-          error ->
-            error
+      @compile {:inline, worker_name: 1}
+      for {name, index} <- Enum.with_index(@worker_names) do
+        defp worker_name(unquote(index)) do
+          unquote(name)
         end
       end
 
       def write(measurement, tags, fields, timestamp \\ nil)
 
       def write(measurement, tags, fields, timestamp) when is_list(fields) do
-        {conn_mod, names} = Fluxter.Pool.state(__MODULE__)
-        conn_mod.write(Enum.random(names), measurement, tags, fields, timestamp)
+        [:positive]
+        |> System.unique_integer()
+        |> rem(@pool_size)
+        |> worker_name()
+        |> @connection.write(measurement, tags, fields, timestamp)
       end
 
       def write(measurement, tags, value, timestamp)
@@ -344,7 +363,7 @@ defmodule Fluxter do
         write(measurement, [], value)
       end
 
-      def measure(measurement, tags \\ [], fields \\ [], fun_or_mfa) do
+      def measure(measurement, tags \\ [], fields \\ [], timestamp \\ nil, fun_or_mfa) do
         {elapsed_time, result} =
           case fun_or_mfa do
             fun when is_function(fun, 0) ->
@@ -354,7 +373,7 @@ defmodule Fluxter do
               :timer.tc(module, fun, arguments)
           end
 
-        write(measurement, tags, [value: elapsed_time] ++ fields)
+        write(measurement, tags, [value: elapsed_time] ++ fields, timestamp)
         result
       end
 
@@ -386,8 +405,6 @@ defmodule Fluxter do
       prefix: build_prefix(env, overrides),
       host: Keyword.get(options, :host, "127.0.0.1"),
       port: Keyword.get(options, :port, 8125),
-      pool_size: Keyword.get(options, :pool_size, 5),
-      connection: Keyword.get(options, :connection, Fluxter.Conn.GenUdp)
     }
   end
 
