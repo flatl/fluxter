@@ -6,6 +6,10 @@ defmodule Fluxter.Packet do
   otp_release = :erlang.system_info(:otp_release)
   @addr_family if(otp_release >= ~c"19", do: [1], else: [])
 
+  @reserved_key [?\s, ?,, ?=, ?\\]
+
+  @reserved_string [?\", ?\\]
+
   def header({n1, n2, n3, n4}, port) do
     true = Code.ensure_loaded?(:gen_udp)
 
@@ -55,24 +59,26 @@ defmodule Fluxter.Packet do
   end
 
   defp encode_key(val) do
-    to_string(val) |> escape(~c" ,")
+    to_string(val) |> escape(@reserved_key)
   end
 
-  defp encode_value(val) do
-    cond do
-      is_float(val) ->
-        Float.to_string(val)
+  defp encode_value(val) when is_float(val),
+    do: Float.to_string(val)
 
-      is_integer(val) ->
-        [Integer.to_string(val), ?i]
+  defp encode_value(val) when is_integer(val),
+    do: [Integer.to_string(val), ?i]
 
-      is_boolean(val) ->
-        Atom.to_string(val)
+  defp encode_value(val) when is_boolean(val),
+    do: Atom.to_string(val)
 
-      is_binary(val) ->
-        [?\", escape(val, ~c"\""), ?\"]
-    end
-  end
+  defp encode_value(val) when is_binary(val),
+    do: [?\", escape(val, @reserved_string), ?\"]
+
+  defp encode_value(val) when is_atom(val),
+    do: encode_value(Atom.to_string(val))
+
+  defp encode_value(val),
+    do: encode_value(inspect(val))
 
   defp escape(val, reserved) do
     for <<char <- val>>, into: "" do

@@ -123,7 +123,7 @@ defmodule FluxterTest do
   end
 
   test "write omits the timestamp when not provided" do
-    TestFluxter.write("foo", [], [x: 1])
+    TestFluxter.write("foo", [], x: 1)
     assert_receive {:echo, "foo x=1i"}
   end
 
@@ -132,7 +132,7 @@ defmodule FluxterTest do
     assert_receive {:echo, "foo x=1i"}
   end
 
-  test "write/2,3" do
+  test "write/2,3,4" do
     TestFluxter.write("foo", bar: 11, baz: 0)
     assert_receive {:echo, "foo bar=11i,baz=0i"}
 
@@ -151,11 +151,42 @@ defmodule FluxterTest do
     TestFluxter.write("foo", false)
     assert_receive {:echo, "foo value=false"}
 
+    TestFluxter.write("foo", value: :some_atom)
+    assert_receive {:echo, "foo value=\"some_atom\""}
+
+    TestFluxter.write("foo", value: {1, 2})
+    assert_receive {:echo, "foo value=\"{1, 2}\""}
+
     TestFluxter.write("foo", [bar: "baz qux"], 0)
     assert_receive {:echo, "foo,bar=baz\\ qux value=0i"}
 
     TestFluxter.write("foo", [bar: "baz", qux: "baz"], 0)
     assert_receive {:echo, "foo,bar=baz,qux=baz value=0i"}
+
+    TestFluxter.write("foo", [bar: "baz", qux: "baz"], 0)
+    assert_receive {:echo, "foo,bar=baz,qux=baz value=0i"}
+
+    TestFluxter.write("foo", [], [value: 1], 1_415_521_167_028_000_000)
+    assert_receive {:echo, "foo value=1i 1415521167028000000"}
+
+    refute_receive _any
+  end
+
+  test "write escapes reserved characters in tags and string fields" do
+    TestFluxter.write("meas", [k: "a=b"], 1)
+    assert_receive {:echo, "meas,k=a\\=b value=1i"}
+
+    TestFluxter.write("meas", [k: "a,b"], 1)
+    assert_receive {:echo, "meas,k=a\\,b value=1i"}
+
+    TestFluxter.write("meas", [k: "end\\"], 1)
+    assert_receive {:echo, "meas,k=end\\\\ value=1i"}
+
+    TestFluxter.write("meas", [], s: "a\\b")
+    assert_receive {:echo, "meas s=\"a\\\\b\""}
+
+    TestFluxter.write("meas", [], s: "a b")
+    assert_receive {:echo, "meas s=\"a b\""}
 
     refute_receive _any
   end
