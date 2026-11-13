@@ -22,7 +22,10 @@ defmodule Fluxter.Mixfile do
   end
 
   def application() do
-    [applications: [:logger], env: [host: "127.0.0.1", port: 8092]]
+    [
+      applications: [:logger],
+      env: [host: "127.0.0.1", port: 8092]
+    ]
   end
 
   defp desc() do
@@ -37,7 +40,9 @@ defmodule Fluxter.Mixfile do
   end
 
   defp deps() do
-    [{:ex_doc, "~> 0.38", only: :dev, runtime: false}]
+    [
+      {:ex_doc, "~> 0.38", only: :dev, runtime: false}
+    ]
   end
 
   defp docs() do
